@@ -11,9 +11,38 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 
+#if defined(CONFIG_DISPLAY_ENABLED) && defined(CONFIG_DISPLAY_BUS_I2C)
+#include "driver/i2c_master.h"
+#define BOARD_HAS_DISPLAY_I2C 1
+#endif
+
 static const char TAG[] = "ESP32S3-Generic";
 
 static bool s_board_initialized = false;
+
+#ifdef BOARD_HAS_DISPLAY_I2C
+static i2c_master_bus_handle_t s_i2c_disp_bus_handle = NULL;
+
+static esp_err_t init_display_i2c_bus(void) {
+  i2c_master_bus_config_t i2c_cfg = {
+      .i2c_port = -1,
+      .sda_io_num = CONFIG_DISPLAY_I2C_SDA,
+      .scl_io_num = CONFIG_DISPLAY_I2C_SCL,
+      .clk_source = I2C_CLK_SRC_DEFAULT,
+      .glitch_ignore_cnt = 7,
+      .flags.enable_internal_pullup = true,
+  };
+  esp_err_t err = i2c_new_master_bus(&i2c_cfg, &s_i2c_disp_bus_handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to initialize display I2C bus: %s",
+             esp_err_to_name(err));
+    return err;
+  }
+  ESP_LOGI(TAG, "Display I2C bus initialized: sda=%d, scl=%d",
+           CONFIG_DISPLAY_I2C_SDA, CONFIG_DISPLAY_I2C_SCL);
+  return ESP_OK;
+}
+#endif
 
 #ifdef CONFIG_MUTE_GPIO
 static esp_err_t init_mute_gpio(void) {
@@ -53,6 +82,11 @@ bool iot_board_is_init(void) {
 }
 
 board_res_handle_t iot_board_get_handle(int id) {
+#ifdef BOARD_HAS_DISPLAY_I2C
+  if (id == BOARD_I2C_DISP_ID) {
+    return (board_res_handle_t)s_i2c_disp_bus_handle;
+  }
+#endif
   (void)id;
   return NULL;
 }
@@ -67,6 +101,13 @@ esp_err_t iot_board_init(void) {
   esp_err_t err = init_mute_gpio();
   if (err != ESP_OK) {
     return err;
+  }
+#endif
+
+#ifdef BOARD_HAS_DISPLAY_I2C
+  esp_err_t i2c_err = init_display_i2c_bus();
+  if (i2c_err != ESP_OK) {
+    return i2c_err;
   }
 #endif
 
