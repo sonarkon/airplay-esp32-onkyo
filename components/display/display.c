@@ -274,6 +274,13 @@ static void send_dirty_rows(void) {
   s_shadow_valid = true;
 }
 
+// Tracks panel sleep state across calls. Not touched from on_rtsp_event()
+// itself — SetPowerSave() does a blocking I2C write, and that callback runs
+// inside taskENTER_CRITICAL()/taskEXIT_CRITICAL(), where blocking I/O is not
+// safe. Reacting to the state change here instead, in the render task's own
+// context, keeps the I2C traffic out of the critical section.
+static bool s_panel_asleep = false;
+
 static void display_render(void) {
   display_snapshot_t snap;
 
@@ -286,18 +293,30 @@ static void display_render(void) {
   snap.state = s_display.state;
   taskEXIT_CRITICAL(&s_display_mux);
 
+  // No AirPlay client connected: sleep the panel instead of leaving "AirPlay
+  // Ready" burned into the same spot indefinitely. SSD1306 power-save cuts
+  // the panel down to a few µA and responds to the next SetPowerSave(0)
+  // immediately, so there is no visible wake delay when a client connects.
+  if (snap.state == DISPLAY_STATE_STANDBY) {
+    if (!s_panel_asleep) {
+      u8g2_SetPowerSave(&s_u8g2, 1);
+      s_panel_asleep = true;
+    }
+    return;
+  }
+  if (s_panel_asleep) {
+    u8g2_SetPowerSave(&s_u8g2, 0);
+    s_panel_asleep = false;
+  }
+
   u8g2_ClearBuffer(&s_u8g2);
   s_scroll.active = false;
   scroll_tick();
 
   switch (snap.state) {
   case DISPLAY_STATE_STANDBY:
-    u8g2_SetFont(&s_u8g2, u8g2_font_7x14_tf);
-#if defined(CONFIG_DISPLAY_HEIGHT_32)
-    u8g2_DrawUTF8(&s_u8g2, 0, 20, "AirPlay Ready");
-#else
-    u8g2_DrawUTF8(&s_u8g2, 0, 32, "AirPlay Ready");
-#endif
+    // Unreachable: handled by the early return above, which sleeps the
+    // panel instead of rendering anything for this state.
     break;
 
   case DISPLAY_STATE_CONNECTED:
