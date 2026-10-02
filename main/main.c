@@ -38,6 +38,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "remote_control.h"
 
 static const char *TAG = "main";
 
@@ -367,6 +368,12 @@ void app_main(void) {
            (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
   buttons_init();
+
+  /* Onkyo remote control over IR and RI. No-op unless a GPIO is configured. */
+  esp_err_t rc_err = remote_control_init();
+  if (rc_err != ESP_OK) {
+    ESP_LOGW(TAG, "remote control init failed: %s", esp_err_to_name(rc_err));
+  }
 
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(10000));

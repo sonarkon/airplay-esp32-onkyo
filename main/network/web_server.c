@@ -21,6 +21,7 @@
 #include "rtsp_server.h"
 #include "audio_output.h"
 #include "esp_app_desc.h"
+#include "control/remote_control.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -33,6 +34,7 @@
 
 #ifdef CONFIG_DAC_TAS57XX
 #include "dac_tas57xx.h"
+#include "remote_control.h"
 #endif
 
 /* Sub level-trim (2.1 subwoofer) is exposed by both the TAS57xx and TAS58xx
@@ -1291,6 +1293,162 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
 
 #endif /* CONFIG_DAC_TAS58XX */
 
+/* ── Onkyo remote control ────────────────────────────────────────────────
+ *
+ * GET /api/remote/send?cmd=volup[&repeat=3]
+ * GET /api/remote/list
+ *
+ * Deliberately GET with a query string rather than POST with JSON: Home
+ * Assistant drives these through rest_command, and they are trivial to try
+ * from a browser or curl while wiring up the hardware.
+ */
+static esp_err_t remote_send_handler(httpd_req_t *req) {
+  char query[128];
+  char cmd[32]   = {0};
+  char rep[8]    = {0};
+  int  repeat    = 1;
+
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    httpd_query_key_value(query, "cmd", cmd, sizeof(cmd));
+    if (httpd_query_key_value(query, "repeat", rep, sizeof(rep)) == ESP_OK) {
+      repeat = atoi(rep);
+    }
+  }
+
+  cJSON *response = cJSON_CreateObject();
+  if (cmd[0] == '\0') {
+    cJSON_AddBoolToObject(response, "success", false);
+    cJSON_AddStringToObject(response, "error", "missing ?cmd=");
+  } else {
+    esp_err_t err = remote_control_send(cmd, repeat);
+    cJSON_AddBoolToObject(response, "success", err == ESP_OK);
+    cJSON_AddStringToObject(response, "command", cmd);
+    if (err != ESP_OK) {
+      cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+    }
+  }
+
+  char *json_str = cJSON_Print(response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(response);
+  return ESP_OK;
+}
+
+static esp_err_t remote_list_handler(httpd_req_t *req) {
+  size_t count = 0;
+  const remote_command_t *cmds = remote_control_commands(&count);
+
+  cJSON *response = cJSON_CreateObject();
+  cJSON_AddBoolToObject(response, "available", remote_control_available());
+  cJSON *arr = cJSON_AddArrayToObject(response, "commands");
+  for (size_t i = 0; i < count; i++) {
+    cJSON *item = cJSON_CreateObject();
+    cJSON_AddStringToObject(item, "name", cmds[i].name);
+    cJSON_AddStringToObject(item, "bus", cmds[i].is_ir ? "ir" : "ri");
+    cJSON_AddStringToObject(item, "label", cmds[i].label);
+    cJSON_AddItemToArray(arr, item);
+  }
+
+  char *json_str = cJSON_Print(response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(response);
+  return ESP_OK;
+}
+
+static esp_err_t remote_status_handler(httpd_req_t *req) {
+  remote_power_sense_t sense = remote_control_power_sense();
+
+  cJSON *response = cJSON_CreateObject();
+  cJSON_AddBoolToObject(response, "valid", sense.valid);
+  if (sense.valid) {
+    cJSON_AddBoolToObject(response, "on", sense.on);
+    cJSON_AddNumberToObject(response, "raw", sense.raw);
+    cJSON_AddNumberToObject(response, "millivolts", sense.millivolts);
+  }
+
+  char *json_str = cJSON_Print(response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(response);
+  return ESP_OK;
+}
+
+/* GET /api/remote/probe[?n=200&step_us=100&pull=down|up&atten=0]  (atten=0: 0 dB, else 12 dB)
+ * Releases the RI pin and samples it; see remote_control_probe_ri(). Without
+ * parameters, a short log-spaced run. n <= 400, and n*step_us is capped at
+ * 100 ms - that is how long the line floats. */
+static esp_err_t remote_probe_handler(httpd_req_t *req) {
+  char query[64];
+  char val[16];
+  size_t n = 0;
+  uint32_t step_us = 0;
+  int pull = REMOTE_PROBE_PULL_NONE;
+  int atten = REMOTE_PROBE_ATTEN_12DB;
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    if (httpd_query_key_value(query, "n", val, sizeof(val)) == ESP_OK) {
+      n = (size_t)atoi(val);
+    }
+    if (httpd_query_key_value(query, "step_us", val, sizeof(val)) == ESP_OK) {
+      step_us = (uint32_t)atoi(val);
+    }
+    if (httpd_query_key_value(query, "atten", val, sizeof(val)) == ESP_OK) {
+      atten = atoi(val) == 0 ? REMOTE_PROBE_ATTEN_0DB : REMOTE_PROBE_ATTEN_12DB;
+    }
+    if (httpd_query_key_value(query, "pull", val, sizeof(val)) == ESP_OK) {
+      pull = strcmp(val, "down") == 0 ? REMOTE_PROBE_PULL_DOWN
+             : strcmp(val, "up") == 0  ? REMOTE_PROBE_PULL_UP
+                                       : REMOTE_PROBE_PULL_NONE;
+    }
+  }
+  if (step_us == 0 || n == 0) {
+    step_us = 0;
+    n = 8;
+  }
+  if (n > 400) {
+    n = 400;
+  }
+  if (step_us > 0 && (uint64_t)n * step_us > 100000) {
+    n = 100000 / step_us;
+  }
+
+  remote_probe_point_t *pts = malloc(n * sizeof(*pts));
+  if (!pts) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    return ESP_FAIL;
+  }
+  esp_err_t err = remote_control_probe_ri(pts, &n, step_us, pull, atten);
+
+  cJSON *response = cJSON_CreateObject();
+  cJSON_AddBoolToObject(response, "success", err == ESP_OK);
+  if (err != ESP_OK) {
+    cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+  } else {
+    cJSON *t = cJSON_AddArrayToObject(response, "t_us");
+    cJSON *raw = cJSON_AddArrayToObject(response, "raw");
+    cJSON *mv = cJSON_AddArrayToObject(response, "mv");
+    cJSON *lvl = cJSON_AddArrayToObject(response, "level");
+    for (size_t i = 0; i < n; i++) {
+      cJSON_AddItemToArray(t, cJSON_CreateNumber(pts[i].t_us));
+      cJSON_AddItemToArray(raw, cJSON_CreateNumber(pts[i].raw));
+      cJSON_AddItemToArray(mv, cJSON_CreateNumber(pts[i].millivolts));
+      cJSON_AddItemToArray(lvl, cJSON_CreateNumber(pts[i].level));
+    }
+  }
+  free(pts);
+
+  char *json_str = cJSON_PrintUnformatted(response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(response);
+  return ESP_OK;
+}
+
 esp_err_t web_server_start(uint16_t port) {
   if (s_server) {
     ESP_LOGW(TAG, "Web server already running");
@@ -1328,6 +1486,26 @@ esp_err_t web_server_start(uint16_t port) {
   httpd_uri_t root_uri = {
       .uri = "/", .method = HTTP_GET, .handler = root_handler};
   httpd_register_uri_handler(s_server, &root_uri);
+
+  httpd_uri_t remote_send_uri = {.uri     = "/api/remote/send",
+                                 .method  = HTTP_GET,
+                                 .handler = remote_send_handler};
+  httpd_register_uri_handler(s_server, &remote_send_uri);
+
+  httpd_uri_t remote_list_uri = {.uri     = "/api/remote/list",
+                                 .method  = HTTP_GET,
+                                 .handler = remote_list_handler};
+  httpd_register_uri_handler(s_server, &remote_list_uri);
+
+  httpd_uri_t remote_status_uri = {.uri     = "/api/remote/status",
+                                   .method  = HTTP_GET,
+                                   .handler = remote_status_handler};
+  httpd_register_uri_handler(s_server, &remote_status_uri);
+
+  httpd_uri_t remote_probe_uri = {.uri     = "/api/remote/probe",
+                                  .method  = HTTP_GET,
+                                  .handler = remote_probe_handler};
+  httpd_register_uri_handler(s_server, &remote_probe_uri);
 
   httpd_uri_t favicon_uri = {
       .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_handler};

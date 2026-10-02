@@ -469,6 +469,97 @@ menu "Airplay ESP Configuration"
                 cabable of and want album art.
     endmenu
 
+    menu "Remote Control (Onkyo IR/RI)"
+        config REMOTE_IR_TX_GPIO
+            int "IR transmitter GPIO (-1 to disable)"
+            default -1
+            range -1 48
+            help
+                GPIO driving the infrared LED, through a series resistor or an
+                NPN driver. Carries volume, mute and input selection - the
+                receiver offers no RI command for any of them.
+
+        config REMOTE_RI_TX_GPIO
+            int "RI transmitter GPIO (-1 to disable)"
+            default -1
+            range -1 48
+            help
+                GPIO driving the wired RI bus (3.5 mm mono, tip is data,
+                sleeve is ground), through a 470 ohm series resistor. Carries
+                only power on and standby, but both are discrete commands -
+                unlike the IR power key, which is a toggle.
+
+        config REMOTE_AUTO_INPUT
+            bool "Switch the receiver on when AirPlay starts"
+            default n
+            help
+                When an AirPlay stream begins, wake the receiver over RI and
+                select the input the DAC is wired to. Runs entirely on the
+                device - no Home Assistant round trip, and it still works
+                when the network to the automation server is down.
+
+                Only ever switches on. Turning off is left to the automation
+                that follows the TV, so the two do not fight over the state.
+
+        config REMOTE_AUTO_INPUT_CMD
+            string "Input command to select"
+            default ""
+            depends on REMOTE_AUTO_INPUT
+            help
+                Name from the command table, e.g. line1, line2, line3, opt.
+
+        config REMOTE_AUTO_INPUT_DELAY_MS
+            int "Delay between power on and input select (ms)"
+            default 3000
+            range 0 10000
+            depends on REMOTE_AUTO_INPUT
+            help
+                The receiver needs a moment after waking before it accepts an
+                input command over IR.
+
+        config REMOTE_POWER_SENSE
+            bool "Sense the receiver's real power state over the RI line"
+            default n
+            depends on REMOTE_RI_TX_GPIO >= 0
+            help
+                A powered-on R-1045 loads the RI line very slightly more
+                than one in standby. The RI GPIO is released from RMT for a
+                moment and read through the ADC with its internal pull-up
+                enabled; the pull-up reads about 1.18 V either way, but about
+                2 mV lower with the receiver on. Exposed at
+                GET /api/remote/status.
+
+                The margin is small (0.2 %), so this is a hint rather than
+                a certainty: it depends on the unit, the 3.3 V rail and the
+                ADC calibration. Check the readings of your own unit with
+                GET /api/remote/probe?n=200&step_us=100&pull=up in both
+                states and set the threshold between them.
+
+                The RI GPIO is the one the transmitter already uses, no extra
+                wiring. While it is released, the line floats for ~40 ms.
+
+        config REMOTE_POWER_SENSE_THRESHOLD_UV
+            int "Threshold (microvolts): on if the pulled-up level is below"
+            default 1183300
+            range 1 3300000
+            depends on REMOTE_POWER_SENSE
+            help
+                Mean ADC level (in microvolts) of the RI pad with the
+                internal pull-up enabled. Below this counts as powered on.
+                Measured on the reference unit: ~1184.4 mV in standby,
+                ~1182.2 mV powered on - so the midpoint, 1183.3 mV.
+
+        config REMOTE_POWER_SENSE_INTERVAL_MS
+            int "Sense interval (ms)"
+            default 10000
+            range 500 600000
+            depends on REMOTE_POWER_SENSE
+            help
+                How often to sample. Each sample holds the RI/IR bus (the
+                same mutex a real command uses) for ~40 ms, so a command
+                issued at that moment waits that long.
+    endmenu
+
     menu "Button Configuration"
         config BTN_PLAY_PAUSE_GPIO
             int "Play/Pause button GPIO (-1 to disable)"

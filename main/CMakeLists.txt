@@ -2,6 +2,7 @@ set( SRC_FILES
     "main.c"
     "alac_magic_cookie.c"
     "settings.c"
+    "control/remote_control.c"
     "audio/audio_receiver.c"
     "audio/audio_stream.c"
     "audio/audio_stream_realtime.c"
@@ -75,6 +76,7 @@ set( INC_DIRS
     "plist" 
     "hap" 
     "network"
+    "control"
 )
 
 set( DEPS
@@ -92,6 +94,8 @@ set( DEPS
     json
     mbedtls
     esp_driver_ledc
+    esp_driver_rmt
+    esp_adc
     boards
     dac
     dac_tas58xx
