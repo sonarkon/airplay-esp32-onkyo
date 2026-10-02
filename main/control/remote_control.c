@@ -58,7 +58,7 @@ static const remote_command_t s_commands[] = {
     {"mute",    true,  0x03D2, 0xFA05, "Mute"},
     {"line1",   true,  0x03D2, 0xF906, "Input LINE 1 (turntable)"},
     {"line2",   true,  0x03D2, 0xEE11, "Input LINE 2 (spare)"},
-    {"line3",   true,  0x04D2, 0xB44B, "Input LINE 3 (AirPlay)"},
+    {"line3",   true,  0x04D2, 0xB44B, "Input LINE 3 (spare)"},
     {"cd",      true,  0x03D2, 0xA956, "Input CD/COAX"},
     {"tuner",   true,  0x03D2, 0xF40B, "Input TUNER"},
     {"phono",   true,  0x03D2, 0xF50A, "Input PHONO"},
