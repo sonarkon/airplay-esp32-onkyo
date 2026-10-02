@@ -92,6 +92,10 @@ static portMUX_TYPE        s_sense_mux     = portMUX_INITIALIZER_UNLOCKED;
  * driver touches it. gpio_config_as_analog() (called by
  * adc_oneshot_config_channel) switches the output off, so a snapshot taken
  * after that would preserve a dead output. */
+/* True when CONFIG_REMOTE_POWER_SENSE_GPIO names a dedicated ADC pin wired to the
+ * RI tip: the RI pad is then never touched, the ADC just reads the tip while
+ * the transmitter keeps holding its own pad low. */
+static bool                s_sense_ext     = false;
 static uint32_t            s_pad_out_sel   = 0;
 static bool                s_pad_was_out   = false;
 static remote_power_sense_t s_sense        = {0};
@@ -405,11 +409,13 @@ static esp_err_t sense_read_series(const uint32_t *at_us, size_t n,
                                      .bitwidth = ADC_BITWIDTH_DEFAULT};
   adc_oneshot_config_channel(s_adc, s_adc_channel, &chan_cfg);
 
-  gpio_set_level(s_ri_gpio, 0); /* plain-GPIO output level, for the restore */
-  gpio_set_direction(s_ri_gpio, GPIO_MODE_INPUT);
-  gpio_set_pull_mode(s_ri_gpio, pull == REMOTE_PROBE_PULL_DOWN ? GPIO_PULLDOWN_ONLY
-                                  : pull == REMOTE_PROBE_PULL_UP  ? GPIO_PULLUP_ONLY
-                                                                  : GPIO_FLOATING);
+  if (!s_sense_ext) {
+    gpio_set_level(s_ri_gpio, 0); /* plain-GPIO output level, for the restore */
+    gpio_set_direction(s_ri_gpio, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(s_ri_gpio, pull == REMOTE_PROBE_PULL_DOWN ? GPIO_PULLDOWN_ONLY
+                                    : pull == REMOTE_PROBE_PULL_UP  ? GPIO_PULLUP_ONLY
+                                                                    : GPIO_FLOATING);
+  }
 
   esp_err_t err = ESP_OK;
   const int64_t t0 = esp_timer_get_time();
@@ -429,10 +435,12 @@ static esp_err_t sense_read_series(const uint32_t *at_us, size_t n,
     out[i].t_us       = (uint32_t)(esp_timer_get_time() - t0);
     out[i].raw        = raw;
     out[i].millivolts = mv;
-    out[i].level      = gpio_get_level(s_ri_gpio);
+    out[i].level      = s_sense_ext ? 0 : gpio_get_level(s_ri_gpio);
   }
 
-  pad_restore();
+  if (!s_sense_ext) {
+    pad_restore();
+  }
 
   xSemaphoreGive(s_lock);
   return err;
@@ -533,15 +541,18 @@ static esp_err_t power_sense_start(int ri_gpio) {
   s_ri_gpio = ri_gpio;
   s_pad_out_sel = GPIO.func_out_sel_cfg[ri_gpio].val;
   s_pad_was_out = (GPIO.enable >> ri_gpio) & 1;
+  s_sense_ext   = CONFIG_REMOTE_POWER_SENSE_GPIO >= 0;
+  /* Dedicated pin if configured, else the RI pad itself. */
+  const int adc_gpio = s_sense_ext ? CONFIG_REMOTE_POWER_SENSE_GPIO : ri_gpio;
 
   adc_oneshot_unit_init_cfg_t unit_cfg = {.unit_id = ADC_UNIT_1};
   adc_unit_t detected_unit;
   ESP_RETURN_ON_ERROR(
-      adc_oneshot_io_to_channel(ri_gpio, &detected_unit, &s_adc_channel), TAG,
-      "GPIO%d is not ADC-capable", ri_gpio);
+      adc_oneshot_io_to_channel(adc_gpio, &detected_unit, &s_adc_channel), TAG,
+      "GPIO%d is not ADC-capable", adc_gpio);
   ESP_RETURN_ON_FALSE(detected_unit == ADC_UNIT_1, ESP_ERR_NOT_SUPPORTED, TAG,
                       "GPIO%d is on an ADC unit this code does not use",
-                      ri_gpio);
+                      adc_gpio);
 
   ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&unit_cfg, &s_adc), TAG,
                       "adc_oneshot_new_unit");
@@ -555,9 +566,12 @@ static esp_err_t power_sense_start(int ri_gpio) {
   ESP_RETURN_ON_ERROR(
       adc_oneshot_config_channel(s_adc, s_adc_channel, &chan_cfg), TAG,
       "adc_oneshot_config_channel");
-  /* That call switched the pad to analog and its output off - undo it, RMT
-   * still needs to drive this pin. */
-  pad_restore();
+  /* On the RI pad that call switched the pad to analog and its output off -
+   * undo it, RMT still needs to drive this pin. A dedicated pin is not
+   * RMT's, so there is nothing to undo. */
+  if (!s_sense_ext) {
+    pad_restore();
+  }
 
   adc_cali_curve_fitting_config_t cali_cfg = {
       .unit_id  = ADC_UNIT_1,
@@ -582,8 +596,8 @@ static esp_err_t power_sense_start(int ri_gpio) {
   }
 
   ESP_LOGI(TAG,
-           "power sense on GPIO%d (ADC1 ch%d): on below %d uV, every %d ms",
-           ri_gpio, (int)s_adc_channel, CONFIG_REMOTE_POWER_SENSE_THRESHOLD_UV,
+           "power sense on GPIO%d (ADC1 ch%d%s): on below %d uV, every %d ms",
+           adc_gpio, (int)s_adc_channel, s_sense_ext ? ", dedicated" : "", CONFIG_REMOTE_POWER_SENSE_THRESHOLD_UV,
            CONFIG_REMOTE_POWER_SENSE_INTERVAL_MS);
   return ESP_OK;
 }

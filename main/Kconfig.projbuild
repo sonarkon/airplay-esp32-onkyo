@@ -538,6 +538,23 @@ menu "Airplay ESP Configuration"
                 The RI GPIO is the one the transmitter already uses, no extra
                 wiring. While it is released, the line floats for ~40 ms.
 
+        config REMOTE_POWER_SENSE_GPIO
+            int "Dedicated ADC GPIO wired to the RI tip (-1: reuse the RI GPIO)"
+            default -1
+            range -1 48
+            depends on REMOTE_POWER_SENSE
+            help
+                An ADC1-capable pin (GPIO1-10 on ESP32-S3) connected to the
+                jack side of the RI series resistor. The ADC then reads the
+                tip while the transmitter keeps driving its own pad low, so
+                the RI pad is never released. -1 falls back to releasing the
+                RI pad itself, which only gives a ~2 mV shift on a 1.18 V
+                pull-up level.
+
+                Neither variant detected the receiver's power state on the
+                reference unit: the tip reads ~0 V relative to the ESP's
+                ground either way. See docs/HARDWARE.md.
+
         config REMOTE_POWER_SENSE_THRESHOLD_UV
             int "Threshold (microvolts): on if the pulled-up level is below"
             default 1183300

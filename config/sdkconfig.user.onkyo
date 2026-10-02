@@ -50,13 +50,14 @@ CONFIG_SPDIF_DO_IO=12
 CONFIG_REMOTE_IR_TX_GPIO=5
 CONFIG_REMOTE_RI_TX_GPIO=4
 
-# Power sense (experimentell, AUS): der R-1045 laesst sich ueber den ADC der RI-
-# Leitung nicht zuverlaessig als an/Standby erkennen. Der Unterschied betraegt
-# ~2 mV auf dem ~1,18-V-Pullup-Pegel (Standby 1184,4 / an 1182,2 mV, vier
-# Zyklen reproduzierbar), der Absolutwert driftet aber von Session zu Session
-# um mehrere mV. Frei schwebend / mit Pulldown liegt die Leitung bei 0-1 mV
-# (0 dB), also unter dem ADC-Rauschen. Siehe docs/HARDWARE.md.
+# Power sense (experimentell, AUS): Der An/Standby-Zustand des R-1045 ist weder
+# am freigegebenen RI-Pin noch an einem eigenen ADC-Pin (GPIO2, am Tip) per ESP32-
+# ADC zu lesen. Die ~2 mV, die ein Multimeter zwischen Tip und Sleeve zeigt, sind
+# ein Versatz zwischen Sleeve am Kabel und ESP-Masse (Ausgleichsstrom zwischen
+# zwei Massen), kein Signal der RI-Leitung: Tip gegen ESP-GND zeigt in beiden
+# Zustaenden ~0 (ADC 0,05-0,07 mV). Siehe docs/HARDWARE.md.
 # CONFIG_REMOTE_POWER_SENSE=y
+# CONFIG_REMOTE_POWER_SENSE_GPIO=2
 
 # Wenn AirPlay startet: Receiver wecken. Weil das Audio auf CD/COAX liegt
 # und der RI-Befehl 0x20 genau diesen Eingang wählt, erledigt ein einziger
