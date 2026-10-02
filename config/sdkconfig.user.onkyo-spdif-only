@@ -1,0 +1,23 @@
+# =====================================================================
+# Isolierter S/PDIF-Test — nur der Audioausgang, ohne Fernsteuerung,
+# OLED oder Automatik. Dient dazu, S/PDIF für sich zu bestätigen, bevor
+# die Erweiterungen aus sdkconfig.user.onkyo dazukommen.
+# =====================================================================
+
+# Beschaltung wie in sdkconfig.user.onkyo, auf GPIO12 (CONFIG_SPDIF_DO_IO):
+#
+#                       100nF
+#   GPIO12 ----270R------||---- Cinch Signal
+#                 |
+#               120R
+#                 |
+#   GND  --------------------- Cinch Masse
+#
+# BCK und WS werden dabei auf keinen Pin geroutet.
+#
+# WICHTIG: CONFIG_SPDIF_DO_IO ist eine eigene Option, unabhängig von
+# CONFIG_I2S_DO_IO (das ist nur für I2S-DAC-Boards). Ohne diese Zeile
+# bleibt SPDIF_DO_IO auf seinem Default -1 stehen und der Ausgang ist
+# stumm, obwohl CONFIG_AUDIO_OUTPUT_SPDIF=y gesetzt ist.
+CONFIG_AUDIO_OUTPUT_SPDIF=y
+CONFIG_SPDIF_DO_IO=12

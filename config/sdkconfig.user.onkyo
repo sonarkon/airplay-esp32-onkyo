@@ -1,0 +1,78 @@
+# =====================================================================
+# Onkyo-Bridge: ESP32-S3 als AirPlay-Empfänger und Fernsteuerung
+#
+# Wird über config/sdkconfig.defaults.esp32s3 gelegt, ändert also nichts
+# an den Projektvorgaben — siehe user_platformio.ini.
+# =====================================================================
+
+# ── Audio: koaxiales S/PDIF statt I2S-DAC ────────────────────────────
+# Der R-1045 hat am CD/COAX-Eingang eine koaxiale Digitalbuchse. Damit
+# entfällt der PCM5102A vollständig: der Receiver wandelt selbst, und der
+# ESP braucht statt drei Signalleitungen bei 2,8 MHz nur einen Ausgang.
+#
+# Beschaltung laut audio_output_spdif.c, hier auf GPIO12 (CONFIG_SPDIF_DO_IO):
+#
+#                       100nF
+#   GPIO12 ----270R----||---- Cinch Signal
+#                 |
+#               120R
+#                 |
+#   GND  --------------------- Cinch Masse
+#
+# BCK und WS werden dabei auf keinen Pin geroutet.
+#
+# WICHTIG: CONFIG_SPDIF_DO_IO ist eine eigene Option, unabhängig von
+# CONFIG_I2S_DO_IO (das ist nur für I2S-DAC-Boards). Ohne diese Zeile
+# bleibt SPDIF_DO_IO auf seinem Default -1 stehen und der Ausgang ist
+# stumm, obwohl CONFIG_AUDIO_OUTPUT_SPDIF=y gesetzt ist.
+CONFIG_AUDIO_OUTPUT_SPDIF=y
+CONFIG_SPDIF_DO_IO=12
+
+# ── Fernsteuerung ─────────────────────────────────────────────────────
+#
+# RI: GPIO4 -> 470R -> Klinke Tip, GND -> Sleeve. Reiner DC-Puls, kein
+# Träger, siehe docs/RI-CODES.md für das Protokoll.
+#
+# IR: GPIO5 treibt einen NPN-Transistor statt die LED direkt, damit die
+# LED per Reflexion (Decke/Wand) sendet und nicht auf den Empfänger im
+# Receiver zielen muss:
+#
+#   5V ──[33R]──►│── LED (Anode oben) ──┐
+#                                       │ Kollektor
+#   GPIO5 ──[1k2]──┤ Basis               │  NPN (BC337 / 2N2222)
+#                   └─ Emitter ──────────┴── GND
+#
+# ~100 mA Pulsstrom statt 20 mA bei Direktansteuerung.
+#
+# GPIO5 statt GPIO6, weil GPIO6 jetzt OLED-SCL trägt (Lötpunkt beim Bauen
+# um eins verrutscht - siehe unten). Elektrisch beliebig, kein Strapping-,
+# Flash- oder PSRAM-Pin.
+CONFIG_REMOTE_IR_TX_GPIO=5
+CONFIG_REMOTE_RI_TX_GPIO=4
+
+# Power sense (experimentell, AUS): der R-1045 laesst sich ueber den ADC der RI-
+# Leitung nicht zuverlaessig als an/Standby erkennen. Der Unterschied betraegt
+# ~2 mV auf dem ~1,18-V-Pullup-Pegel (Standby 1184,4 / an 1182,2 mV, vier
+# Zyklen reproduzierbar), der Absolutwert driftet aber von Session zu Session
+# um mehrere mV. Frei schwebend / mit Pulldown liegt die Leitung bei 0-1 mV
+# (0 dB), also unter dem ADC-Rauschen. Siehe docs/HARDWARE.md.
+# CONFIG_REMOTE_POWER_SENSE=y
+
+# Wenn AirPlay startet: Receiver wecken. Weil das Audio auf CD/COAX liegt
+# und der RI-Befehl 0x20 genau diesen Eingang wählt, erledigt ein einziger
+# Befehl beides — kein IR-Kommando, keine Wartezeit.
+CONFIG_REMOTE_AUTO_INPUT=y
+CONFIG_REMOTE_AUTO_INPUT_CMD=""
+CONFIG_REMOTE_AUTO_INPUT_DELAY_MS=0
+
+# ── OLED ──────────────────────────────────────────────────────────────
+CONFIG_DISPLAY_ENABLED=y
+CONFIG_DISPLAY_DRIVER_SSD1306=y
+CONFIG_DISPLAY_BUS_I2C=y
+CONFIG_DISPLAY_HEIGHT_32=y
+# SDA auf GPIO6, SCL auf GPIO7 - beim Löten um einen Pin verrutscht.
+# Software-seitig beliebig, solange Config und Verdrahtung übereinstimmen.
+CONFIG_DISPLAY_I2C_SDA=6
+CONFIG_DISPLAY_I2C_SCL=7
+CONFIG_DISPLAY_I2C_ADDR=0x3C
+CONFIG_DISPLAY_UPDATE_MS=500

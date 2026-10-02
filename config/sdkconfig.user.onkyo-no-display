@@ -1,0 +1,20 @@
+# =====================================================================
+# Diagnose-Build: identisch zu sdkconfig.user.onkyo, aber ohne Display.
+#
+# Testet die Hypothese, dass die alle 500ms laufende I2C-Aktualisierung
+# des OLED (CONFIG_DISPLAY_UPDATE_MS) der Grund ist, warum
+# remote_control_send() in der vollen Firmware mit ESP_ERR_TIMEOUT
+# scheitert, obwohl dasselbe RMT-Muster in einem Minimalprojekt
+# (WLAN+HTTP+RMT, auch mit einem zweiten RMT-Kanal für eine Status-LED)
+# nie fehlschlägt — selbst im Leerlauf ohne laufende AirPlay-Wiedergabe.
+# =====================================================================
+
+CONFIG_AUDIO_OUTPUT_SPDIF=y
+CONFIG_SPDIF_DO_IO=12
+
+CONFIG_REMOTE_IR_TX_GPIO=5
+CONFIG_REMOTE_RI_TX_GPIO=4
+
+CONFIG_REMOTE_AUTO_INPUT=y
+CONFIG_REMOTE_AUTO_INPUT_CMD=""
+CONFIG_REMOTE_AUTO_INPUT_DELAY_MS=0
